@@ -1,0 +1,81 @@
+"""Typed environment configuration shared by the two service applications."""
+
+from functools import lru_cache
+
+from pydantic import AnyHttpUrl, Field, PositiveFloat, SecretStr, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ConfigurationError(RuntimeError):
+    """Raised when a service cannot load a complete environment configuration."""
+
+
+class _Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+class CoreSettings(_Settings):
+    """Configuration owned by the public Core API."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="CORE_",
+        extra="ignore",
+    )
+
+    port: int = Field(default=8000, ge=1, le=65535)
+    orchestrator_url: AnyHttpUrl
+    request_timeout_seconds: PositiveFloat = 30
+    api_key: SecretStr
+
+
+class OrchestratorSettings(_Settings):
+    """Configuration owned by the private Orchestrator API."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="ORCHESTRATOR_",
+        extra="ignore",
+    )
+
+    port: int = Field(default=8001, ge=1, le=65535)
+    database_url: str
+    openrouter_base_url: AnyHttpUrl
+    openrouter_api_key: SecretStr
+    ollama_base_url: AnyHttpUrl
+    provider_timeout_seconds: PositiveFloat = 60
+
+
+def _load(settings_type: type[CoreSettings] | type[OrchestratorSettings]):
+    try:
+        return settings_type()
+    except ValidationError as error:
+        missing = [
+            str(item["loc"][0])
+            for item in error.errors()
+            if item["type"] == "missing"
+        ]
+        detail = ", ".join(missing) or "invalid values"
+        service = settings_type.__name__.removesuffix("Settings")
+        raise ConfigurationError(
+            f"{service} configuration is invalid: {detail}. "
+            "Set the values in .env (see .env.example)."
+        ) from error
+
+
+@lru_cache
+def get_core_settings() -> CoreSettings:
+    """Load and cache Core configuration for dependency injection."""
+    return _load(CoreSettings)
+
+
+@lru_cache
+def get_orchestrator_settings() -> OrchestratorSettings:
+    """Load and cache Orchestrator configuration for dependency injection."""
+    return _load(OrchestratorSettings)
