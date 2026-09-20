@@ -1,19 +1,31 @@
 """Orchestrator API application entry point."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
 
 from packages.common.settings import get_orchestrator_settings
+from packages.persistence.database import Database
+from packages.persistence.migrations import upgrade_database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Validate configuration before accepting Orchestrator API requests."""
-    get_orchestrator_settings()
-    yield
+    """Migrate, connect, and close Orchestrator persistence resources."""
+    settings = get_orchestrator_settings()
+    await asyncio.to_thread(upgrade_database)
+
+    database = Database(settings.database_url)
+    await database.check_connection()
+    _.state.database = database
+
+    try:
+        yield
+    finally:
+        await database.dispose()
 
 
 def create_app() -> FastAPI:

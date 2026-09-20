@@ -66,6 +66,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - persistence
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot"]
       interval: 10s
@@ -94,6 +96,5 @@ volumes:
 networks:
   service:
   persistence:
-    internal: true
   workflow:
     internal: true

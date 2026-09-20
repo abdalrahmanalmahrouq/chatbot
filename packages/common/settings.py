@@ -60,9 +60,7 @@ def _load(settings_type: type[CoreSettings] | type[OrchestratorSettings]):
         return settings_type()
     except ValidationError as error:
         missing = [
-            str(item["loc"][0])
-            for item in error.errors()
-            if item["type"] == "missing"
+            str(item["loc"][0]) for item in error.errors() if item["type"] == "missing"
         ]
         detail = ", ".join(missing) or "invalid values"
         service = settings_type.__name__.removesuffix("Settings")

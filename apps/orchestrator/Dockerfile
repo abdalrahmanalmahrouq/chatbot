@@ -11,5 +11,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY apps ./apps
 COPY packages ./packages
+COPY alembic ./alembic
+COPY alembic.ini ./
 
 CMD ["uv", "run", "--no-sync", "python", "-m", "apps.orchestrator.main"]
