@@ -1,5 +1,5 @@
 [project]
-name = "chatbotaa"
+name = "chatbot"
 version = "0.1.0"
 description = "AI chat platform microservices"
 readme = "README.md"

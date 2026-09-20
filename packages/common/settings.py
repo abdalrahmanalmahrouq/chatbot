@@ -31,7 +31,6 @@ class CoreSettings(_Settings):
     port: int = Field(default=8000, ge=1, le=65535)
     orchestrator_url: AnyHttpUrl
     request_timeout_seconds: PositiveFloat = 30
-    api_key: SecretStr
 
 
 class OrchestratorSettings(_Settings):
@@ -46,9 +45,13 @@ class OrchestratorSettings(_Settings):
 
     port: int = Field(default=8001, ge=1, le=65535)
     database_url: str
+    redis_url: str
     openrouter_base_url: AnyHttpUrl
     openrouter_api_key: SecretStr
-    ollama_base_url: AnyHttpUrl
+    ollama_base_url: AnyHttpUrl = Field(
+        default="http://localhost:11434", validate_default=True
+    )
+    ollama_enabled: bool = False
     provider_timeout_seconds: PositiveFloat = 60
 
 

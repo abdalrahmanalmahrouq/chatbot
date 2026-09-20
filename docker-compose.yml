@@ -1,0 +1,99 @@
+name: chatbot
+
+services:
+  core:
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    env_file: .env
+    environment:
+      CORE_ORCHESTRATOR_URL: http://orchestrator:8001
+    ports:
+      - "8000:8000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - service
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    env_file: .env
+    environment:
+      ORCHESTRATOR_DATABASE_URL: postgresql+asyncpg://chatbot:${POSTGRES_PASSWORD}@postgres:5432/chatbot
+      ORCHESTRATOR_REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - service
+      - persistence
+      - workflow
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://localhost:8001/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: chatbot
+      POSTGRES_USER: chatbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - persistence
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - workflow
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  service:
+  persistence:
+    internal: true
+  workflow:
+    internal: true
