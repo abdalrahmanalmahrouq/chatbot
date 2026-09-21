@@ -3,14 +3,19 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from apps.orchestrator.dependencies import get_model_catalog
+from apps.orchestrator.model_catalog import ModelCatalog, OpenAIModelList
 from packages.common.settings import get_orchestrator_settings
 from packages.persistence.database import Database
 from packages.persistence.migrations import upgrade_database
 from packages.providers.factory import close_provider_clients, create_provider_clients
+
+ModelCatalogDependency = Annotated[ModelCatalog, Depends(get_model_catalog)]
 
 
 @asynccontextmanager
@@ -42,6 +47,10 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "orchestrator"}
+
+    @app.get("/v1/models", response_model=OpenAIModelList, tags=["models"])
+    async def list_models(catalog: ModelCatalogDependency) -> OpenAIModelList:
+        return await catalog.list_models()
 
     return app
 

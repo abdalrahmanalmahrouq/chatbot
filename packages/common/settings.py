@@ -2,7 +2,14 @@
 
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field, PositiveFloat, SecretStr, ValidationError
+from pydantic import (
+    AnyHttpUrl,
+    Field,
+    PositiveFloat,
+    SecretStr,
+    ValidationError,
+    field_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +60,15 @@ class OrchestratorSettings(_Settings):
     )
     ollama_enabled: bool = False
     provider_timeout_seconds: PositiveFloat = 60
+    fallback_model: str | None = None
+
+    @field_validator("fallback_model", mode="before")
+    @classmethod
+    def blank_fallback_model_is_not_configured(cls, value: object) -> object:
+        """Treat an empty environment variable as an absent fallback."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 def _load(settings_type: type[CoreSettings] | type[OrchestratorSettings]):

@@ -33,6 +33,7 @@ def test_orchestrator_settings_load_from_environment(
     monkeypatch.setenv("ORCHESTRATOR_OPENROUTER_API_KEY", "test-provider-key")
     monkeypatch.setenv("ORCHESTRATOR_OLLAMA_BASE_URL", "http://localhost:11434")
     monkeypatch.setenv("ORCHESTRATOR_OLLAMA_ENABLED", "true")
+    monkeypatch.setenv("ORCHESTRATOR_FALLBACK_MODEL", "example/model")
     get_orchestrator_settings.cache_clear()
 
     settings = get_orchestrator_settings()
@@ -40,6 +41,7 @@ def test_orchestrator_settings_load_from_environment(
     assert settings.port == 8001
     assert str(settings.ollama_base_url) == "http://localhost:11434/"
     assert settings.ollama_enabled is True
+    assert settings.fallback_model == "example/model"
 
 
 def test_missing_required_core_value_has_actionable_error(
