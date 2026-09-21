@@ -10,22 +10,29 @@ from fastapi import FastAPI
 from packages.common.settings import get_orchestrator_settings
 from packages.persistence.database import Database
 from packages.persistence.migrations import upgrade_database
+from packages.providers.factory import close_provider_clients, create_provider_clients
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Migrate, connect, and close Orchestrator persistence resources."""
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Open and close Orchestrator database and provider resources."""
     settings = get_orchestrator_settings()
     await asyncio.to_thread(upgrade_database)
 
     database = Database(settings.database_url)
-    await database.check_connection()
-    _.state.database = database
+    provider_clients = {}
 
     try:
+        await database.check_connection()
+        provider_clients = create_provider_clients(settings)
+        app.state.database = database
+        app.state.provider_clients = provider_clients
         yield
     finally:
-        await database.dispose()
+        try:
+            await close_provider_clients(provider_clients)
+        finally:
+            await database.dispose()
 
 
 def create_app() -> FastAPI:
