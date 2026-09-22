@@ -1,7 +1,7 @@
 """Transactional conversation and chat-run persistence for Orchestrator."""
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.persistence.models import (
+    AuditEvent,
     Conversation,
     Message,
     MessageRole,
@@ -63,6 +64,14 @@ class ChatRunResult:
         for value in (self.input_tokens, self.output_tokens):
             if value is not None and value < 0:
                 raise ValueError("token counts cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEventRecord:
+    """Safe metadata for a policy or workflow decision associated with one run."""
+
+    event_type: str
+    details: dict[str, object] = field(default_factory=dict)
 
 
 class ConversationService:
@@ -126,6 +135,7 @@ class ConversationService:
         user_content: str,
         assistant_content: str | None,
         run_result: ChatRunResult,
+        audit_events: tuple[AuditEventRecord, ...] = (),
     ) -> OrchestrationRun:
         """Persist one chat request, messages, and its run result atomically."""
         try:
@@ -152,25 +162,34 @@ class ConversationService:
                         )
                     )
 
-                run = OrchestrationRun(
-                    conversation_id=conversation.id,
-                    request_id=run_result.request_id,
-                    correlation_id=run_result.correlation_id,
-                    status=run_result.status,
-                    provider=run_result.provider,
-                    model=run_result.model,
-                    input_tokens=run_result.input_tokens,
-                    output_tokens=run_result.output_tokens,
-                    error_code=run_result.error_code,
-                    error_message=run_result.error_message,
-                )
+                run = self._new_run(conversation.id, run_result)
                 conversation.updated_at = datetime.now(UTC)
                 self._session.add_all([*messages, run])
                 await self._session.flush()
+                await self._store_audit_events(run, run_result, audit_events)
                 return run
         except IntegrityError as error:
             raise ConversationWriteConflictError(
                 "could not write a consistent conversation exchange"
+            ) from error
+
+    async def record_run(
+        self,
+        run_result: ChatRunResult,
+        audit_events: tuple[AuditEventRecord, ...] = (),
+    ) -> OrchestrationRun:
+        """Persist a run that was rejected before a conversation was prepared."""
+        try:
+            async with self._session.begin():
+                await self._ensure_request_is_new(run_result.request_id)
+                run = self._new_run(None, run_result)
+                self._session.add(run)
+                await self._session.flush()
+                await self._store_audit_events(run, run_result, audit_events)
+                return run
+        except IntegrityError as error:
+            raise ConversationWriteConflictError(
+                "could not write a consistent chat run"
             ) from error
 
     async def _locked_conversation(self, conversation_id: uuid.UUID) -> Conversation:
@@ -200,3 +219,41 @@ class ConversationService:
         if last_sequence is None:
             return 0
         return int(last_sequence) + 1
+
+    @staticmethod
+    def _new_run(
+        conversation_id: uuid.UUID | None,
+        run_result: ChatRunResult,
+    ) -> OrchestrationRun:
+        return OrchestrationRun(
+            conversation_id=conversation_id,
+            request_id=run_result.request_id,
+            correlation_id=run_result.correlation_id,
+            status=run_result.status,
+            provider=run_result.provider,
+            model=run_result.model,
+            input_tokens=run_result.input_tokens,
+            output_tokens=run_result.output_tokens,
+            error_code=run_result.error_code,
+            error_message=run_result.error_message,
+        )
+
+    async def _store_audit_events(
+        self,
+        run: OrchestrationRun,
+        run_result: ChatRunResult,
+        audit_events: tuple[AuditEventRecord, ...],
+    ) -> None:
+        events = [
+            AuditEvent(
+                run_id=run.id,
+                request_id=run_result.request_id,
+                correlation_id=run_result.correlation_id,
+                event_type=audit_event.event_type,
+                details=dict(audit_event.details),
+            )
+            for audit_event in audit_events
+        ]
+        if events:
+            self._session.add_all(events)
+            await self._session.flush()

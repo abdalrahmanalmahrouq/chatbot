@@ -61,6 +61,9 @@ class OrchestratorSettings(_Settings):
     ollama_enabled: bool = False
     provider_timeout_seconds: PositiveFloat = 60
     fallback_model: str | None = None
+    input_max_characters: int = Field(default=12000, ge=1)
+    output_max_characters: int = Field(default=24000, ge=1)
+    blocked_terms: str = ""
 
     @field_validator("fallback_model", mode="before")
     @classmethod
@@ -69,6 +72,13 @@ class OrchestratorSettings(_Settings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @property
+    def configured_blocked_terms(self) -> tuple[str, ...]:
+        """Return normalized terms from the comma-separated environment value."""
+        return tuple(
+            term.casefold() for term in self.blocked_terms.split(",") if term.strip()
+        )
 
 
 def _load(settings_type: type[CoreSettings] | type[OrchestratorSettings]):
