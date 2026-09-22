@@ -1,6 +1,30 @@
 name: chatbot
 
 services:
+  openwebui:
+    image: ${OPENWEBUI_IMAGE:?Set OPENWEBUI_IMAGE in .env}
+    env_file: .env
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:?Set WEBUI_SECRET_KEY in .env}
+      WEBUI_ADMIN_EMAIL: ${WEBUI_ADMIN_EMAIL:?Set WEBUI_ADMIN_EMAIL in .env}
+      WEBUI_ADMIN_NAME: ${WEBUI_ADMIN_NAME:?Set WEBUI_ADMIN_NAME in .env}
+      WEBUI_ADMIN_PASSWORD: ${WEBUI_ADMIN_PASSWORD:?Set WEBUI_ADMIN_PASSWORD in .env}
+      ENABLE_SIGNUP: ${OPENWEBUI_ENABLE_SIGNUP:-false}
+      ENABLE_OLLAMA_API: ${OPENWEBUI_ENABLE_OLLAMA_API:-false}
+      ENABLE_OPENAI_API: ${OPENWEBUI_ENABLE_OPENAI_API:-true}
+      OPENAI_API_BASE_URLS: ${OPENWEBUI_OPENAI_API_BASE_URLS}
+      OPENAI_API_KEYS: ${OPENWEBUI_OPENAI_API_KEYS:-}
+      OPENAI_API_CONFIGS: ${OPENWEBUI_OPENAI_API_CONFIGS:-{}}
+    ports:
+      - "${OPENWEBUI_PORT:-3000}:8080"
+    volumes:
+      - openwebui_data:/app/backend/data
+    depends_on:
+      core:
+        condition: service_healthy
+    networks:
+      - service
+
   core:
     build:
       context: .
@@ -90,6 +114,7 @@ services:
       start_period: 5s
 
 volumes:
+  openwebui_data:
   postgres_data:
   redis_data:
 

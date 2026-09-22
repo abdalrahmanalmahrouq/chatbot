@@ -20,7 +20,7 @@ from apps.orchestrator.model_selection import (
     ModelSelector,
 )
 from apps.orchestrator.workflow.models import OrchestrationState, WorkflowFailure
-from packages.persistence.models import RunStatus
+from packages.persistence.models import Conversation, RunStatus
 from packages.providers.contracts import ChatCompletionRequest
 from packages.providers.exceptions import ProviderError
 
@@ -48,10 +48,12 @@ class WorkflowNodes:
                 conversation = await self.conversations.continue_conversation(
                     conversation_id=request.conversation_id
                 )
-            else:
-                conversation = await self.conversations.create_conversation(
-                    external_id=request.external_conversation_id
+            elif request.external_conversation_id is not None:
+                conversation = await self._continue_or_create_external_conversation(
+                    request.external_conversation_id
                 )
+            else:
+                conversation = await self.conversations.create_conversation()
         except ConversationConflictError:
             return {
                 "failure": WorkflowFailure(
@@ -71,6 +73,25 @@ class WorkflowNodes:
                 )
             }
         return {"conversation": conversation}
+
+    async def _continue_or_create_external_conversation(
+        self, external_id: str
+    ) -> Conversation:
+        """Keep every repeated Open WebUI chat ID on one conversation."""
+        try:
+            return await self.conversations.continue_conversation(
+                external_id=external_id
+            )
+        except ConversationNotFoundError:
+            try:
+                return await self.conversations.create_conversation(
+                    external_id=external_id
+                )
+            except ConversationConflictError:
+                # Another request created the same external conversation first.
+                return await self.conversations.continue_conversation(
+                    external_id=external_id
+                )
 
     async def model_selection(self, state: OrchestrationState) -> dict[str, object]:
         try:

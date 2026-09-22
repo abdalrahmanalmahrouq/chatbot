@@ -3,7 +3,7 @@
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from apps.orchestrator.workflow.models import ChatWorkflowResponse, WorkflowFailure
 from packages.providers.contracts import ChatMessage
@@ -24,6 +24,18 @@ class OrchestrateRequest(BaseModel):
     external_conversation_id: str | None = Field(default=None, min_length=1)
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_conversation_identifier(self) -> "OrchestrateRequest":
+        """A request must choose one stable way to identify a conversation."""
+        if (
+            self.conversation_id is not None
+            and self.external_conversation_id is not None
+        ):
+            raise ValueError(
+                "provide either conversation_id or external_conversation_id, not both"
+            )
+        return self
 
 
 class OrchestrationFailure(BaseModel):

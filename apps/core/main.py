@@ -75,13 +75,8 @@ def create_app() -> FastAPI:
         request: Request,
         client: OrchestratorClientDependency,
     ) -> ChatCompletionResponse:
-        if body.stream:
-            raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail=(
-                    "streaming will be enabled when the workflow stream is available"
-                ),
-            )
+        # Open WebUI requests streaming by default. Until the provider-to-client
+        # streaming path is added, complete the request normally instead.
         response = await _call_orchestrator(
             client.orchestrate(
                 {
@@ -89,6 +84,9 @@ def create_app() -> FastAPI:
                     "messages": [message.model_dump() for message in body.messages],
                     "temperature": body.temperature,
                     "max_tokens": body.max_tokens,
+                    "external_conversation_id": request.headers.get(
+                        "x-openwebui-chat-id"
+                    ),
                 },
                 _forwarded_headers(request),
             )
@@ -120,7 +118,19 @@ def _forwarded_headers(request: Request) -> dict[str, str]:
     """Forward correlation identifiers only; credentials never cross services."""
     request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
     correlation_id = request.headers.get("x-correlation-id", request_id)
-    return {"x-request-id": request_id, "x-correlation-id": correlation_id}
+    headers = {
+        "x-request-id": request_id,
+        "x-correlation-id": correlation_id,
+    }
+    for header_name in (
+        "x-openwebui-chat-id",
+        "x-openwebui-user-id",
+        "x-openwebui-task-id",
+    ):
+        header_value = request.headers.get(header_name)
+        if header_value:
+            headers[header_name] = header_value
+    return headers
 
 
 async def _call_orchestrator(awaitable):
