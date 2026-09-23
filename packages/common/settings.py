@@ -3,6 +3,7 @@
 from functools import lru_cache
 
 from pydantic import (
+    AliasChoices,
     AnyHttpUrl,
     Field,
     PositiveFloat,
@@ -38,6 +39,9 @@ class CoreSettings(_Settings):
     port: int = Field(default=8000, ge=1, le=65535)
     orchestrator_url: AnyHttpUrl
     request_timeout_seconds: PositiveFloat = 30
+    log_level: str = Field(
+        default="INFO", validation_alias=AliasChoices("CORE_LOG_LEVEL", "LOG_LEVEL")
+    )
 
 
 class OrchestratorSettings(_Settings):
@@ -64,6 +68,10 @@ class OrchestratorSettings(_Settings):
     input_max_characters: int = Field(default=12000, ge=1)
     output_max_characters: int = Field(default=24000, ge=1)
     blocked_terms: str = ""
+    log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("ORCHESTRATOR_LOG_LEVEL", "LOG_LEVEL"),
+    )
 
     @field_validator("fallback_model", mode="before")
     @classmethod

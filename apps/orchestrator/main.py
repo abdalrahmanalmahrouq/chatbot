@@ -1,6 +1,8 @@
 """Orchestrator API application entry point."""
 
 import asyncio
+import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +16,12 @@ from apps.orchestrator.dependencies import get_chat_workflow, get_model_catalog
 from apps.orchestrator.model_catalog import ModelCatalog, OpenAIModel, OpenAIModelList
 from apps.orchestrator.workflow.graph import ChatWorkflow
 from apps.orchestrator.workflow.models import ChatWorkflowRequest
+from packages.common.logging import (
+    configure_logging,
+    log_event,
+    reset_request_context,
+    set_request_context,
+)
 from packages.common.settings import get_orchestrator_settings
 from packages.persistence.database import Database
 from packages.persistence.migrations import upgrade_database
@@ -21,12 +29,14 @@ from packages.providers.factory import close_provider_clients, create_provider_c
 
 ModelCatalogDependency = Annotated[ModelCatalog, Depends(get_model_catalog)]
 ChatWorkflowDependency = Annotated[ChatWorkflow, Depends(get_chat_workflow)]
+logger = logging.getLogger("chatbot.orchestrator")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open and close Orchestrator database and provider resources."""
     settings = get_orchestrator_settings()
+    configure_logging("orchestrator", settings.log_level)
     await asyncio.to_thread(upgrade_database)
 
     database = Database(settings.database_url)
@@ -37,17 +47,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         provider_clients = create_provider_clients(settings)
         app.state.database = database
         app.state.provider_clients = provider_clients
+        log_event(logger, logging.INFO, "service_started")
         yield
     finally:
         try:
             await close_provider_clients(provider_clients)
         finally:
             await database.dispose()
+            log_event(logger, logging.INFO, "service_stopped")
 
 
 def create_app() -> FastAPI:
     """Create the internal API that delegates work to Orchestrator services."""
     app = FastAPI(title="Chatbot Orchestrator API", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def log_request(request: Request, call_next):
+        request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+        correlation_id = request.headers.get("x-correlation-id", request_id)
+        context = set_request_context(request_id, correlation_id)
+        started_at = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "request_failed",
+                method=request.method,
+                path=request.url.path,
+            )
+            raise
+        else:
+            response.headers["x-request-id"] = request_id
+            response.headers["x-correlation-id"] = correlation_id
+            log_event(
+                logger,
+                logging.INFO,
+                "request_completed",
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+            )
+            return response
+        finally:
+            reset_request_context(context)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
@@ -84,7 +129,17 @@ def create_app() -> FastAPI:
             temperature=body.temperature,
             max_tokens=body.max_tokens,
         )
-        return OrchestrateResponse.from_workflow(await workflow.run(workflow_request))
+        response = OrchestrateResponse.from_workflow(
+            await workflow.run(workflow_request)
+        )
+        if response.failure is not None:
+            log_event(
+                logger,
+                logging.WARNING,
+                "workflow_controlled_failure",
+                failure_code=response.failure.code,
+            )
+        return response
 
     return app
 

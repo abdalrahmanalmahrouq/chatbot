@@ -1,5 +1,6 @@
 """Core API application entry point."""
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -20,22 +21,33 @@ from apps.core.orchestrator_client import (
     OrchestratorClient,
     OrchestratorResponseError,
 )
+from packages.common.logging import (
+    configure_logging,
+    log_event,
+    reset_request_context,
+    set_request_context,
+)
 from packages.common.settings import get_core_settings
+
+logger = logging.getLogger("chatbot.core")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Validate configuration before accepting Core API requests."""
     settings = get_core_settings()
+    configure_logging("core", settings.log_level)
     client = OrchestratorClient(
         base_url=str(settings.orchestrator_url),
         timeout_seconds=settings.request_timeout_seconds,
     )
     app.state.orchestrator_client = client
+    log_event(logger, logging.INFO, "service_started")
     try:
         yield
     finally:
         await client.close()
+        log_event(logger, logging.INFO, "service_stopped")
 
 
 def get_orchestrator_client(request: Request) -> OrchestratorClient:
@@ -50,6 +62,39 @@ OrchestratorClientDependency = Annotated[
 def create_app() -> FastAPI:
     """Create the Core API without embedding gateway logic in route handlers."""
     app = FastAPI(title="Chatbot Core API", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def log_request(request: Request, call_next):
+        request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+        correlation_id = request.headers.get("x-correlation-id", request_id)
+        context = set_request_context(request_id, correlation_id)
+        started_at = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                "request_failed",
+                method=request.method,
+                path=request.url.path,
+            )
+            raise
+        else:
+            response.headers["x-request-id"] = request_id
+            response.headers["x-correlation-id"] = correlation_id
+            log_event(
+                logger,
+                logging.INFO,
+                "request_completed",
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round((time.perf_counter() - started_at) * 1000),
+            )
+            return response
+        finally:
+            reset_request_context(context)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
@@ -138,16 +183,24 @@ async def _call_orchestrator(awaitable):
     try:
         return await awaitable
     except TimeoutException as error:
+        log_event(logger, logging.WARNING, "orchestrator_timeout")
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="orchestrator request timed out",
         ) from error
     except RequestError as error:
+        log_event(logger, logging.WARNING, "orchestrator_unavailable")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="orchestrator is unavailable",
         ) from error
     except OrchestratorResponseError as error:
+        log_event(
+            logger,
+            logging.WARNING,
+            "orchestrator_response_error",
+            status_code=error.status_code,
+        )
         raise HTTPException(
             status_code=error.status_code, detail=error.detail
         ) from error
